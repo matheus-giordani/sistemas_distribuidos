@@ -97,9 +97,3 @@ uvicorn services.load_agent.app.main:app --reload --port 8004
 | Cargas  | `POST /shed` | Aplica shedding em cargas flexíveis |
 
 Os modelos completos estão definidos nos arquivos `services/*/app/main.py`.
-
-## Próximos passos sugeridos
-
-- Persistir estados em um banco (PostgreSQL, Redis) para manter histórico.
-- Criar testes automáticos para validar a lógica de coordenação.
-- Implementar notificações/streaming (Kafka, MQTT) para tornar o sistema reativo.
