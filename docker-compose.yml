@@ -1,0 +1,67 @@
+version: "3.9"
+
+services:
+  central:
+    build:
+      context: .
+      dockerfile: services/central/Dockerfile
+    container_name: central-agent
+    environment:
+      SOLAR_AGENT_URL: http://solar-agent:8000
+      BATTERY_AGENT_URL: http://battery-agent:8000
+      VEHICLE_AGENT_URL: http://vehicle-agent:8000
+      LOAD_AGENT_URL: http://load-agent:8000
+    ports:
+      - "8000:8000"
+    depends_on:
+      - solar-agent
+      - battery-agent
+      - vehicle-agent
+      - load-agent
+    networks:
+      - backend
+
+  solar-agent:
+    build:
+      context: .
+      dockerfile: services/solar_agent/Dockerfile
+    container_name: solar-agent
+    ports:
+      - "8000"
+    networks:
+      - backend
+
+  battery-agent:
+    build:
+      context: .
+      dockerfile: services/battery_agent/Dockerfile
+    container_name: battery-agent
+    ports:
+      - "8000"
+    networks:
+      - backend
+
+  vehicle-agent:
+    build:
+      context: .
+      dockerfile: services/vehicle_agent/Dockerfile
+    container_name: vehicle-agent
+    ports:
+      - "8000"
+    networks:
+      - backend
+
+  load-agent:
+    build:
+      context: .
+      dockerfile: services/load_agent/Dockerfile
+    container_name: load-agent
+    ports:
+      - "8000"
+    networks:
+      - backend
+
+
+networks:
+  backend:
+    driver: bridge

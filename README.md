@@ -34,7 +34,7 @@ curl -X POST http://localhost:8000/coordinate \
   -H 'Content-Type: application/json' \
   -d '{
         "solar": {"production_kw": 9.5},
-        "load": {"total_load_kw": 8.0, "critical_load_kw": 5.0, "flexible_load_kw": 3.0},
+        "load": {"critical_load_kw": 5.0, "flexible_load_kw": 3.0},
         "battery": {"state_of_charge_kwh": 6.0},
         "vehicle": {"connected": true, "state_of_charge_kwh": 40.0}
       }'
@@ -92,8 +92,11 @@ uvicorn services.load_agent.app.main:app --reload --port 8004
 | Central | `POST /coordinate` | Recebe medições, coordena agentes e devolve ações aplicadas |
 | Central | `GET /status` | Retorna estados consolidados |
 | Solar   | `POST /production` | Atualiza produção instantânea |
-| Bateria | `POST /control` | Define modo (charge/discharge/idle) e potência | 
+| Bateria | `POST /update` | Atualiza estado medido da bateria (SoC, capacidade) |
+| Bateria | `POST /control` | Define modo (charge/discharge/idle) e potência |
+| Veículo | `POST /update` | Atualiza conexão e estado medido do veículo |
 | Veículo | `POST /control` | Define modo e potência quando conectado |
+| Cargas  | `POST /update` | Atualiza perfil de carga crítica/flexível |
 | Cargas  | `POST /shed` | Aplica shedding em cargas flexíveis |
 
 Os modelos completos estão definidos nos arquivos `services/*/app/main.py`.
