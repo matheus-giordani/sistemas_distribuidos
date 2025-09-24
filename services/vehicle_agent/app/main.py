@@ -4,8 +4,10 @@ from datetime import datetime
 from enum import Enum
 from typing import Dict, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Security, status
+from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class VehicleMode(str, Enum):
@@ -36,6 +38,23 @@ class VehicleStatus(BaseModel):
     last_updated: datetime
 
 
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="")
+
+    api_key: str = Field(..., validation_alias="SERVICE_API_KEY")
+
+
+settings = Settings()
+API_KEY_HEADER_NAME = "X-API-Key"
+api_key_header = APIKeyHeader(name=API_KEY_HEADER_NAME, auto_error=False)
+
+
+def require_api_key(api_key: str = Security(api_key_header)) -> str:
+    if api_key is None or api_key != settings.api_key:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
+    return api_key
+
+
 DEFAULTS: Dict[str, float | bool | datetime | VehicleMode] = {
     "connected": True,
     "capacity_kwh": 60.0,
@@ -64,12 +83,12 @@ def health() -> Dict[str, str]:
 
 
 @app.get("/status", response_model=VehicleStatus)
-def get_status() -> VehicleStatus:
+def get_status(_: str = Depends(require_api_key)) -> VehicleStatus:
     return VehicleStatus(**state)
 
 
 @app.post("/update", response_model=VehicleStatus)
-def update_measurement(measurement: VehicleMeasurement) -> VehicleStatus:
+def update_measurement(measurement: VehicleMeasurement, _: str = Depends(require_api_key)) -> VehicleStatus:
     if measurement.connected is not None:
         state["connected"] = measurement.connected
     if measurement.capacity_kwh:
@@ -81,7 +100,7 @@ def update_measurement(measurement: VehicleMeasurement) -> VehicleStatus:
 
 
 @app.post("/control", response_model=VehicleStatus)
-def apply_control(control: VehicleControl) -> VehicleStatus:
+def apply_control(control: VehicleControl, _: str = Depends(require_api_key)) -> VehicleStatus:
     if not state["connected"] and control.mode != VehicleMode.idle:
         raise HTTPException(status_code=400, detail="Vehicle not connected")
 

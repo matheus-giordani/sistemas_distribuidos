@@ -5,21 +5,41 @@ from enum import Enum
 from typing import Optional
 
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Security, status
+from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    solar_agent_url: str = Field(default="http://solar-agent:8001", env="SOLAR_AGENT_URL")
-    battery_agent_url: str = Field(default="http://battery-agent:8002", env="BATTERY_AGENT_URL")
-    vehicle_agent_url: str = Field(default="http://vehicle-agent:8003", env="VEHICLE_AGENT_URL")
-    load_agent_url: str = Field(default="http://load-agent:8004", env="LOAD_AGENT_URL")
-    http_timeout: float = Field(default=5.0, env="HTTP_CLIENT_TIMEOUT")
+    model_config = SettingsConfigDict(env_prefix="")
+
+    solar_agent_url: str = Field(
+        default="http://solar-agent:8001", validation_alias="SOLAR_AGENT_URL"
+    )
+    battery_agent_url: str = Field(
+        default="http://battery-agent:8002", validation_alias="BATTERY_AGENT_URL"
+    )
+    vehicle_agent_url: str = Field(
+        default="http://vehicle-agent:8003", validation_alias="VEHICLE_AGENT_URL"
+    )
+    load_agent_url: str = Field(
+        default="http://load-agent:8004", validation_alias="LOAD_AGENT_URL"
+    )
+    http_timeout: float = Field(default=5.0, validation_alias="HTTP_CLIENT_TIMEOUT")
+    api_key: str = Field(..., validation_alias="SERVICE_API_KEY")
 
 
 settings = Settings()
 app = FastAPI(title="Central Coordination Agent", version="1.0.0")
+API_KEY_HEADER_NAME = "X-API-Key"
+api_key_header = APIKeyHeader(name=API_KEY_HEADER_NAME, auto_error=False)
+
+
+def require_api_key(api_key: str = Security(api_key_header)) -> str:
+    if api_key is None or api_key != settings.api_key:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
+    return api_key
 
 
 class SolarMeasurement(BaseModel):
@@ -190,14 +210,18 @@ def health() -> dict[str, str]:
 
 
 @app.get("/status", response_model=SystemStatus)
-async def get_status() -> SystemStatus:
-    async with httpx.AsyncClient(timeout=settings.http_timeout) as client:
+async def get_status(_: str = Depends(require_api_key)) -> SystemStatus:
+    async with httpx.AsyncClient(
+        timeout=settings.http_timeout, headers={API_KEY_HEADER_NAME: settings.api_key}
+    ) as client:
         return await fetch_statuses(client)
 
 
 @app.post("/coordinate", response_model=CoordinateResponse)
-async def coordinate(payload: CoordinationPayload) -> CoordinateResponse:
-    async with httpx.AsyncClient(timeout=settings.http_timeout) as client:
+async def coordinate(payload: CoordinationPayload, _: str = Depends(require_api_key)) -> CoordinateResponse:
+    async with httpx.AsyncClient(
+        timeout=settings.http_timeout, headers={API_KEY_HEADER_NAME: settings.api_key}
+    ) as client:
         await push_measurements(payload, client)
         status = await fetch_statuses(client)
 

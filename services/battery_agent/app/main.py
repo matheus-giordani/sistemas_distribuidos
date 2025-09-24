@@ -4,8 +4,10 @@ from datetime import datetime
 from enum import Enum
 from typing import Dict, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Security, status
+from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class BatteryMode(str, Enum):
@@ -33,6 +35,23 @@ class BatteryStatus(BaseModel):
     mode: BatteryMode
     power_kw: float
     last_updated: datetime
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="")
+
+    api_key: str = Field(..., validation_alias="SERVICE_API_KEY")
+
+
+settings = Settings()
+API_KEY_HEADER_NAME = "X-API-Key"
+api_key_header = APIKeyHeader(name=API_KEY_HEADER_NAME, auto_error=False)
+
+
+def require_api_key(api_key: str = Security(api_key_header)) -> str:
+    if api_key is None or api_key != settings.api_key:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
+    return api_key
 
 
 DEFAULTS: Dict[str, float | datetime | BatteryMode] = {
@@ -64,12 +83,12 @@ def health() -> Dict[str, str]:
 
 
 @app.get("/status", response_model=BatteryStatus)
-def get_status() -> BatteryStatus:
+def get_status(_: str = Depends(require_api_key)) -> BatteryStatus:
     return BatteryStatus(**state)
 
 
 @app.post("/update", response_model=BatteryStatus)
-def update_measurement(measurement: BatteryMeasurement) -> BatteryStatus:
+def update_measurement(measurement: BatteryMeasurement, _: str = Depends(require_api_key)) -> BatteryStatus:
     if measurement.capacity_kwh:
         state["capacity_kwh"] = measurement.capacity_kwh
     state["state_of_charge_kwh"] = measurement.state_of_charge_kwh
@@ -79,7 +98,7 @@ def update_measurement(measurement: BatteryMeasurement) -> BatteryStatus:
 
 
 @app.post("/control", response_model=BatteryStatus)
-def apply_control(control: BatteryControl) -> BatteryStatus:
+def apply_control(control: BatteryControl, _: str = Depends(require_api_key)) -> BatteryStatus:
     state["mode"] = control.mode
     effective_power = 0.0
     soc = float(state["state_of_charge_kwh"])

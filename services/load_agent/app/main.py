@@ -3,8 +3,10 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Dict
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Security, status
+from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class LoadMeasurement(BaseModel):
@@ -27,6 +29,23 @@ class LoadStatus(BaseModel):
     total_nominal_load_kw: float
     total_consumption_kw: float
     last_updated: datetime
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="")
+
+    api_key: str = Field(..., validation_alias="SERVICE_API_KEY")
+
+
+settings = Settings()
+API_KEY_HEADER_NAME = "X-API-Key"
+api_key_header = APIKeyHeader(name=API_KEY_HEADER_NAME, auto_error=False)
+
+
+def require_api_key(api_key: str = Security(api_key_header)) -> str:
+    if api_key is None or api_key != settings.api_key:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
+    return api_key
 
 
 DEFAULTS: Dict[str, float | datetime] = {
@@ -58,12 +77,12 @@ def health() -> Dict[str, str]:
 
 
 @app.get("/status", response_model=LoadStatus)
-def get_status() -> LoadStatus:
+def get_status(_: str = Depends(require_api_key)) -> LoadStatus:
     return LoadStatus(**state)
 
 
 @app.post("/update", response_model=LoadStatus)
-def update_loads(measurement: LoadMeasurement) -> LoadStatus:
+def update_loads(measurement: LoadMeasurement, _: str = Depends(require_api_key)) -> LoadStatus:
     state["critical_load_kw"] = measurement.critical_load_kw
     state["flexible_load_kw"] = measurement.flexible_load_kw
     recompute_totals()
@@ -72,7 +91,7 @@ def update_loads(measurement: LoadMeasurement) -> LoadStatus:
 
 
 @app.post("/shed", response_model=LoadStatus)
-def apply_shedding(request: LoadSheddingRequest) -> LoadStatus:
+def apply_shedding(request: LoadSheddingRequest, _: str = Depends(require_api_key)) -> LoadStatus:
     flexible = float(state["flexible_load_kw"])
     if request.shed_kw > flexible:
         raise HTTPException(

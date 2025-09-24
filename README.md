@@ -19,7 +19,10 @@ Todos os serviços oferecem endpoints `GET /health` e `GET /status` para monitor
 
 ## Como executar com Docker Compose
 
+Defina uma chave de API compartilhada para todos os serviços (altere o valor em produção):
+
 ```bash
+export SERVICE_API_KEY=local-dev-key
 docker compose build
 docker compose up
 ```
@@ -32,6 +35,7 @@ a) Atualize medições recebidas dos sensores (produção solar, consumo da casa
 ```bash
 curl -X POST http://localhost:8000/coordinate \
   -H 'Content-Type: application/json' \
+  -H "X-API-Key: $SERVICE_API_KEY" \
   -d '{
         "solar": {"production_kw": 9.5},
         "load": {"critical_load_kw": 5.0, "flexible_load_kw": 3.0},
@@ -61,7 +65,7 @@ b) O agente central consulta os outros serviços, calcula excedentes/deficits e 
 c) Consulte o estado agregado a qualquer momento:
 
 ```bash
-curl http://localhost:8000/status | jq
+curl -H "X-API-Key: $SERVICE_API_KEY" http://localhost:8000/status | jq
 ```
 
 ## Execução local (sem Docker)
@@ -73,6 +77,7 @@ export SOLAR_AGENT_URL=http://localhost:8001
 export BATTERY_AGENT_URL=http://localhost:8002
 export VEHICLE_AGENT_URL=http://localhost:8003
 export LOAD_AGENT_URL=http://localhost:8004
+export SERVICE_API_KEY=${SERVICE_API_KEY:-local-dev-key}
 uvicorn services.central.app.main:app --reload --port 8000
 ```
 
@@ -84,6 +89,8 @@ uvicorn services.battery_agent.app.main:app --reload --port 8002
 uvicorn services.vehicle_agent.app.main:app --reload --port 8003
 uvicorn services.load_agent.app.main:app --reload --port 8004
 ```
+
+Antes de iniciar cada serviço em um terminal separado, exporte a mesma variável `SERVICE_API_KEY`. Cada endpoint protegido exige o cabeçalho `X-API-Key` com esse valor.
 
 ## Endpoints principais
 
