@@ -7,14 +7,13 @@ services:
       dockerfile: services/central/Dockerfile
     container_name: central-agent
     environment:
-      SOLAR_AGENT_URL: http://solar-agent:8001
-      BATTERY_AGENT_URL: http://battery-agent:8002
-      VEHICLE_AGENT_URL: http://vehicle-agent:8003
-      LOAD_AGENT_URL: http://load-agent:8004
+      SOLAR_AGENT_TARGET: solar-agent:8001
+      BATTERY_AGENT_TARGET: battery-agent:8002
+      VEHICLE_AGENT_TARGET: vehicle-agent:8003
+      LOAD_AGENT_TARGET: load-agent:8004
       SERVICE_API_KEY: teste
     ports:
       - "8000:8000"
-      - "5678:5678"
     depends_on:
       - solar-agent
       - battery-agent
@@ -28,10 +27,11 @@ services:
       context: .
       dockerfile: services/solar_agent/Dockerfile
     container_name: solar-agent
-    env_file:
-      - .env
+    environment:
+      SERVICE_API_KEY: teste
+      PORT: 8001
     ports:
-      - "8001"
+      - "8001:8001"
     networks:
       - backend
 
@@ -40,10 +40,11 @@ services:
       context: .
       dockerfile: services/battery_agent/Dockerfile
     container_name: battery-agent
-    env_file:
-      - .env
+    environment:
+      SERVICE_API_KEY: teste
+      PORT: 8002
     ports:
-      - "8002"
+      - "8002:8002"
     networks:
       - backend
 
@@ -52,10 +53,11 @@ services:
       context: .
       dockerfile: services/vehicle_agent/Dockerfile
     container_name: vehicle-agent
-    env_file:
-      - .env
+    environment:
+      SERVICE_API_KEY: teste
+      PORT: 8003
     ports:
-      - "8003"
+      - "8003:8003"
     networks:
       - backend
 
@@ -64,10 +66,11 @@ services:
       context: .
       dockerfile: services/load_agent/Dockerfile
     container_name: load-agent
-    env_file:
-      - .env
+    environment:
+      SERVICE_API_KEY: teste
+      PORT: 8004
     ports:
-      - "8004"
+      - "8004:8004"
     networks:
       - backend
 

@@ -1,133 +1,134 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 from datetime import datetime
-from enum import Enum
-from typing import Dict, Optional
+from typing import Dict
 
-from fastapi import Depends, FastAPI, HTTPException, Security, status
-from fastapi.security import APIKeyHeader
-from pydantic import BaseModel, Field
+import grpc
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-
-class VehicleMode(str, Enum):
-    charge = "charge"
-    discharge = "discharge"
-    idle = "idle"
-
-
-class VehicleMeasurement(BaseModel):
-    connected: Optional[bool] = True
-    state_of_charge_kwh: float = Field(..., ge=0)
-    capacity_kwh: Optional[float] = Field(None, gt=0)
-
-
-class VehicleControl(BaseModel):
-    mode: VehicleMode
-    power_kw: float = Field(..., ge=0)
-
-
-class VehicleStatus(BaseModel):
-    connected: bool
-    capacity_kwh: float
-    state_of_charge_kwh: float
-    max_charge_rate_kw: float
-    max_discharge_rate_kw: float
-    mode: VehicleMode
-    power_kw: float
-    last_updated: datetime
+from services.common import auth, time
+from services.protos import energy_pb2, energy_pb2_grpc
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="")
 
     api_key: str = Field(..., validation_alias="SERVICE_API_KEY")
+    port: int = Field(default=8003, validation_alias="PORT")
 
 
 settings = Settings()
-API_KEY_HEADER_NAME = "X-API-Key"
-api_key_header = APIKeyHeader(name=API_KEY_HEADER_NAME, auto_error=False)
+logger = logging.getLogger(__name__)
 
 
-def require_api_key(api_key: str = Security(api_key_header)) -> str:
-    if api_key is None or api_key != settings.api_key:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
-    return api_key
+class VehicleAgentService(energy_pb2_grpc.VehicleAgentServicer):
+    def __init__(self) -> None:
+        self._state: Dict[str, float | bool | datetime | energy_pb2.VehicleMode] = {
+            "connected": True,
+            "capacity_kwh": 60.0,
+            "state_of_charge_kwh": 30.0,
+            "max_charge_rate_kw": 7.0,
+            "max_discharge_rate_kw": 7.0,
+            "mode": energy_pb2.VehicleMode.VEHICLE_MODE_IDLE,
+            "power_kw": 0.0,
+            "last_updated": time.utc_now(),
+        }
 
+    def _clamp_state_of_charge(self) -> None:
+        capacity = float(self._state["capacity_kwh"])
+        soc = float(self._state["state_of_charge_kwh"])
+        self._state["state_of_charge_kwh"] = min(max(soc, 0.0), capacity)
 
-DEFAULTS: Dict[str, float | bool | datetime | VehicleMode] = {
-    "connected": True,
-    "capacity_kwh": 60.0,
-    "state_of_charge_kwh": 30.0,
-    "max_charge_rate_kw": 7.0,
-    "max_discharge_rate_kw": 7.0,
-    "mode": VehicleMode.idle,
-    "power_kw": 0.0,
-    "last_updated": datetime.utcnow(),
-}
+    def _status(self) -> energy_pb2.VehicleStatus:
+        return energy_pb2.VehicleStatus(
+            connected=bool(self._state["connected"]),
+            capacity_kwh=float(self._state["capacity_kwh"]),
+            state_of_charge_kwh=float(self._state["state_of_charge_kwh"]),
+            max_charge_rate_kw=float(self._state["max_charge_rate_kw"]),
+            max_discharge_rate_kw=float(self._state["max_discharge_rate_kw"]),
+            mode=self._state["mode"],
+            power_kw=float(self._state["power_kw"]),
+            last_updated=time.to_timestamp(self._state["last_updated"]),
+        )
 
+    async def Health(self, request, context):  # noqa: N802
+        return energy_pb2.HealthResponse(status="ok")
 
-state: Dict[str, float | bool | datetime | VehicleMode] = DEFAULTS.copy()
-app = FastAPI(title="Electric Vehicle Agent", version="1.0.0")
+    async def GetStatus(self, request, context):  # noqa: N802
+        await auth.require_api_key(context, settings.api_key)
+        return self._status()
 
+    async def UpdateMeasurement(self, request, context):  # noqa: N802
+        await auth.require_api_key(context, settings.api_key)
+        if request.state_of_charge_kwh < 0:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "state_of_charge_kwh must be non-negative")
+        if request.HasField("capacity_kwh") and request.capacity_kwh.value <= 0:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "capacity_kwh must be positive")
+        if request.HasField("connected"):
+            self._state["connected"] = request.connected.value
+        if request.HasField("capacity_kwh"):
+            self._state["capacity_kwh"] = request.capacity_kwh.value
+        self._state["state_of_charge_kwh"] = request.state_of_charge_kwh
+        self._clamp_state_of_charge()
+        self._state["last_updated"] = time.utc_now()
+        return self._status()
 
-def clamp_state_of_charge() -> None:
-    capacity = float(state["capacity_kwh"])
-    soc = float(state["state_of_charge_kwh"])
-    state["state_of_charge_kwh"] = min(max(soc, 0.0), capacity)
+    async def ApplyControl(self, request, context):  # noqa: N802
+        await auth.require_api_key(context, settings.api_key)
+        if request.power_kw < 0:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "power_kw must be non-negative")
+        if request.mode == energy_pb2.VehicleMode.VEHICLE_MODE_UNSPECIFIED:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "mode is required")
+        if not self._state["connected"] and request.mode != energy_pb2.VehicleMode.VEHICLE_MODE_IDLE:
+            await context.abort(grpc.StatusCode.FAILED_PRECONDITION, "Vehicle not connected")
 
-
-@app.get("/health")
-def health() -> Dict[str, str]:
-    return {"status": "ok"}
-
-
-@app.get("/status", response_model=VehicleStatus)
-def get_status(_: str = Depends(require_api_key)) -> VehicleStatus:
-    return VehicleStatus(**state)
-
-
-@app.post("/update", response_model=VehicleStatus)
-def update_measurement(measurement: VehicleMeasurement, _: str = Depends(require_api_key)) -> VehicleStatus:
-    if measurement.connected is not None:
-        state["connected"] = measurement.connected
-    if measurement.capacity_kwh:
-        state["capacity_kwh"] = measurement.capacity_kwh
-    state["state_of_charge_kwh"] = measurement.state_of_charge_kwh
-    clamp_state_of_charge()
-    state["last_updated"] = datetime.utcnow()
-    return VehicleStatus(**state)
-
-
-@app.post("/control", response_model=VehicleStatus)
-def apply_control(control: VehicleControl, _: str = Depends(require_api_key)) -> VehicleStatus:
-    if not state["connected"] and control.mode != VehicleMode.idle:
-        raise HTTPException(status_code=400, detail="Vehicle not connected")
-
-    state["mode"] = control.mode
-    effective_power = 0.0
-    soc = float(state["state_of_charge_kwh"])
-    capacity = float(state["capacity_kwh"])
-
-    if control.mode == VehicleMode.charge:
-        available_room = capacity - soc
-        if available_room > 0:
-            effective_power = min(control.power_kw, float(state["max_charge_rate_kw"]), available_room)
-            state["state_of_charge_kwh"] = soc + effective_power
-    elif control.mode == VehicleMode.discharge:
-        available_energy = soc
-        if available_energy > 0:
-            effective_power = min(control.power_kw, float(state["max_discharge_rate_kw"]), available_energy)
-            state["state_of_charge_kwh"] = soc - effective_power
-    elif control.mode == VehicleMode.idle:
+        soc = float(self._state["state_of_charge_kwh"])
+        capacity = float(self._state["capacity_kwh"])
         effective_power = 0.0
-    else:
-        raise HTTPException(status_code=400, detail="Unsupported mode")
 
-    state["power_kw"] = effective_power
-    clamp_state_of_charge()
-    state["last_updated"] = datetime.utcnow()
-    return VehicleStatus(**state)
+        if request.mode == energy_pb2.VehicleMode.VEHICLE_MODE_CHARGE:
+            available_room = max(capacity - soc, 0.0)
+            if available_room > 0:
+                effective_power = min(
+                    request.power_kw,
+                    float(self._state["max_charge_rate_kw"]),
+                    available_room,
+                )
+                soc += effective_power
+        elif request.mode == energy_pb2.VehicleMode.VEHICLE_MODE_DISCHARGE:
+            available_energy = max(soc, 0.0)
+            if available_energy > 0:
+                effective_power = min(
+                    request.power_kw,
+                    float(self._state["max_discharge_rate_kw"]),
+                    available_energy,
+                )
+                soc -= effective_power
+        elif request.mode == energy_pb2.VehicleMode.VEHICLE_MODE_IDLE:
+            effective_power = 0.0
+        else:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "Unsupported mode")
+
+        self._state["state_of_charge_kwh"] = soc
+        self._state["mode"] = request.mode
+        self._state["power_kw"] = effective_power
+        self._clamp_state_of_charge()
+        self._state["last_updated"] = time.utc_now()
+        return self._status()
 
 
-__all__ = ["app"]
+async def serve() -> None:
+    server = grpc.aio.server()
+    energy_pb2_grpc.add_VehicleAgentServicer_to_server(VehicleAgentService(), server)
+    server.add_insecure_port(f"[::]:{settings.port}")
+    await server.start()
+    logger.info("Vehicle agent gRPC server listening on %s", settings.port)
+    await server.wait_for_termination()
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    asyncio.run(serve())

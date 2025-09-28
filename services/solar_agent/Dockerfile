@@ -13,4 +13,4 @@ COPY services /code/services
 
 EXPOSE 8001
 
-CMD ["uvicorn", "services.solar_agent.app.main:app", "--host", "0.0.0.0", "--port", "8001"]
+CMD ["python3", "-m", "services.solar_agent.app.main"]

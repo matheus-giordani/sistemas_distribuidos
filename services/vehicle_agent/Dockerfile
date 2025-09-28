@@ -13,4 +13,4 @@ COPY services /code/services
 
 EXPOSE 8003
 
-CMD ["uvicorn", "services.vehicle_agent.app.main:app", "--host", "0.0.0.0", "--port", "8003"]
+CMD ["python3", "-m", "services.vehicle_agent.app.main"]

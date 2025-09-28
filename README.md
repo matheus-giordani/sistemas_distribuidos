@@ -1,109 +1,74 @@
-# Sistema de Coordenação de Energia Distribuída
+# Sistema de Coordenação de Energia Distribuída (gRPC)
 
-Este projeto implementa, com FastAPI e Docker, a arquitetura proposta onde um agente central coordena agentes especializados (painel solar, bateria residencial, veículo elétrico e cargas da casa). Cada agente roda como um microserviço independente, e o `docker-compose` orquestra a comunicação entre eles.
+Esta branch substitui todos os endpoints REST por serviços **gRPC**. O agente central e os agentes especializados (solar, bateria, veículo e cargas) trocam mensagens definidas em `proto/energy.proto`, usando metadados `x-api-key` para autenticação simples.
 
-## Visão Geral da Arquitetura
+## Arquitetura
+- **Central (`energy.CentralCoordinator`)**: recebe medições opcionais, consulta o estado dos agentes e coordena carga/descarga e shed de cargas flexíveis.
+- **Solar (`energy.SolarAgent`)**: mantém a produção instantânea (kW).
+- **Bateria (`energy.BatteryAgent`)**: controla estado de carga, modos `charge`/`discharge`/`idle` e limites de potência.
+- **Veículo (`energy.VehicleAgent`)**: espelha o carregador do veículo elétrico, respeitando conexão e limites.
+- **Cargas (`energy.LoadAgent`)**: acompanha o consumo crítico/flexível e aplica shedding.
 
-- **Agente Central** (`services/central`): agrega os estados dos demais serviços e decide ações de carga/descarga ou shed de cargas flexíveis.
-- **Agente Painel Solar** (`services/solar_agent`): expõe a produção instantânea dos painéis e permite atualizar medições.
-- **Agente Bateria** (`services/battery_agent`): controla o estado de carga da bateria residencial e recebe comandos de carga/descarga.
-- **Agente Veículo Elétrico** (`services/vehicle_agent`): representa o carregador do veículo, permitindo comandos de carga/descarga quando conectado.
-- **Agente Cargas** (`services/load_agent`): mantém o perfil de consumo da residência e permite aplicar shedding em cargas flexíveis.
+Todas as respostas usam `google.protobuf.Timestamp` e validações básicas são realizadas antes de atualizar o estado interno.
 
-Todos os serviços oferecem endpoints `GET /health` e `GET /status` para monitoramento.
+## Proto e stubs
+- Arquivo principal: `proto/energy.proto`.
+- Stubs Python: `services/protos/energy_pb2.py` e `services/protos/energy_pb2_grpc.py`.
+- Para regenerar (requer `grpcio-tools` instalado):
+  ```bash
+  python -m grpc_tools.protoc -I proto --python_out=services/protos --grpc_python_out=services/protos proto/energy.proto
+  ```
+  > O arquivo `energy_pb2_grpc.py` nesta branch replica a saída padrão do plugin oficial.
 
-## Requisitos
+## Executar com Docker Compose
+1. Defina a chave compartilhada (altere em produção):
+   ```bash
+   export SERVICE_API_KEY=teste
+   docker compose build
+   docker compose up
+   ```
+2. Os serviços ficam expostos nas portas `8000-8004`. O compose já injeta `SERVICE_API_KEY=teste`; exporte a mesma variável ao usar clients locais.
 
-- Docker 24+
-- Docker Compose
-
-## Como executar com Docker Compose
-
-Defina uma chave de API compartilhada para todos os serviços (altere o valor em produção):
-
-```bash
-export SERVICE_API_KEY=local-dev-key
-docker compose build
-docker compose up
-```
-
-O agente central ficará disponível em `http://localhost:8000`.
-
-## Fluxo típico
-a) Atualize medições recebidas dos sensores (produção solar, consumo da casa, estado do veículo/bateria):
-
-```bash
-curl -X POST http://localhost:8000/coordinate \
-  -H 'Content-Type: application/json' \
-  -H "X-API-Key: $SERVICE_API_KEY" \
-  -d '{
-        "solar": {"production_kw": 9.5},
-        "load": {"critical_load_kw": 5.0, "flexible_load_kw": 3.0},
-        "battery": {"state_of_charge_kwh": 6.0},
-        "vehicle": {"connected": true, "state_of_charge_kwh": 40.0}
-      }'
-```
-
-b) O agente central consulta os outros serviços, calcula excedentes/deficits e envia comandos para bateria, veículo e cargas flexíveis. A resposta lista as ações tomadas e o estado consolidado:
-
-```json
-{
-  "actions": {
-    "battery": {"mode": "charge", "power_kw": 1.5},
-    "vehicle": {"mode": "idle", "power_kw": 0.0},
-    "load": {"shed_kw": 0.0}
-  },
-  "status": {
-    "solar": {...},
-    "battery": {...},
-    "vehicle": {...},
-    "load": {...}
-  }
-}
-```
-
-c) Consulte o estado agregado a qualquer momento:
+## Chamadas de exemplo (grpcurl)
+Assumindo os serviços em execução e `grpcurl` instalado, use o proto local:
 
 ```bash
-curl -H "X-API-Key: $SERVICE_API_KEY" http://localhost:8000/status | jq
+# Consultar o estado instantâneo do agente solar
+grpcurl -plaintext \
+  -H "x-api-key: teste" \
+  -import-path proto \
+  -proto energy.proto \
+  localhost:8001 energy.SolarAgent/GetStatus
+
+# Coordenar o sistema informando novas medições
+grpcurl -plaintext \
+    -H "x-api-key: teste" \
+    -import-path proto \
+    -proto energy.proto \
+    -d '{
+          "updates": {
+            "solar": {"productionKw": 9.5},
+            "load": {"criticalLoadKw": 5.0, "flexibleLoadKw": 3.0},
+            "battery": {"stateOfChargeKwh": 6.0},
+            "vehicle": {"stateOfChargeKwh": 40.0, "connected": true}
+          }
+        }' \
+    localhost:8000 energy.CentralCoordinator/Coordinate
 ```
 
-## Execução local (sem Docker)
+Os nomes dos campos seguem o padrão `proto3` (camelCase). É obrigatório o cabeçalho `x-api-key` em todas as requisições.
 
-Cada serviço pode ser executado via Uvicorn, desde que as URLs dos agentes sejam configuradas com `localhost` e portas distintas. Exemplo para o agente central:
-
+## Execução local manual
+Em terminais separados:
 ```bash
-export SOLAR_AGENT_URL=http://localhost:8001
-export BATTERY_AGENT_URL=http://localhost:8002
-export VEHICLE_AGENT_URL=http://localhost:8003
-export LOAD_AGENT_URL=http://localhost:8004
-export SERVICE_API_KEY=${SERVICE_API_KEY:-local-dev-key}
-uvicorn services.central.app.main:app --reload --port 8000
+export SERVICE_API_KEY=${SERVICE_API_KEY:-teste}
+python -m services.solar_agent.app.main
+python -m services.battery_agent.app.main
+python -m services.vehicle_agent.app.main
+python -m services.load_agent.app.main
+python -m services.central.app.main
 ```
 
-Em terminais separados execute os demais agentes, ajustando a porta:
-
-```bash
-uvicorn services.solar_agent.app.main:app --reload --port 8001
-uvicorn services.battery_agent.app.main:app --reload --port 8002
-uvicorn services.vehicle_agent.app.main:app --reload --port 8003
-uvicorn services.load_agent.app.main:app --reload --port 8004
-```
-
-Antes de iniciar cada serviço em um terminal separado, exporte a mesma variável `SERVICE_API_KEY`. Cada endpoint protegido exige o cabeçalho `X-API-Key` com esse valor.
-
-## Endpoints principais
-
-| Serviço | Endpoint | Descrição |
-|---------|----------|-----------|
-| Central | `POST /coordinate` | Recebe medições, coordena agentes e devolve ações aplicadas |
-| Central | `GET /status` | Retorna estados consolidados |
-| Solar   | `POST /production` | Atualiza produção instantânea |
-| Bateria | `POST /update` | Atualiza estado medido da bateria (SoC, capacidade) |
-| Bateria | `POST /control` | Define modo (charge/discharge/idle) e potência |
-| Veículo | `POST /update` | Atualiza conexão e estado medido do veículo |
-| Veículo | `POST /control` | Define modo e potência quando conectado |
-| Cargas  | `POST /update` | Atualiza perfil de carga crítica/flexível |
-| Cargas  | `POST /shed` | Aplica shedding em cargas flexíveis |
-
-Os modelos completos estão definidos nos arquivos `services/*/app/main.py`.
+## Notas adicionais
+- Dependências principais: `grpcio`, `protobuf`, `pydantic-settings`.
+- Todos os serviços executam gRPC assíncrono (`grpc.aio`), permitindo concorrência sem bloquear o loop de eventos.

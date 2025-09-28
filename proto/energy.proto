@@ -1,0 +1,173 @@
+syntax = "proto3";
+
+package energy;
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/wrappers.proto";
+
+message HealthResponse {
+  string status = 1;
+}
+
+message ProductionUpdate {
+  double production_kw = 1;
+}
+
+message SolarStatus {
+  double production_kw = 1;
+  google.protobuf.Timestamp last_updated = 2;
+}
+
+service SolarAgent {
+  rpc Health(google.protobuf.Empty) returns (HealthResponse);
+  rpc GetStatus(google.protobuf.Empty) returns (SolarStatus);
+  rpc UpdateProduction(ProductionUpdate) returns (SolarStatus);
+}
+
+enum BatteryMode {
+  BATTERY_MODE_UNSPECIFIED = 0;
+  BATTERY_MODE_CHARGE = 1;
+  BATTERY_MODE_DISCHARGE = 2;
+  BATTERY_MODE_IDLE = 3;
+}
+
+message BatteryMeasurement {
+  double state_of_charge_kwh = 1;
+  google.protobuf.DoubleValue capacity_kwh = 2;
+}
+
+message BatteryControl {
+  BatteryMode mode = 1;
+  double power_kw = 2;
+}
+
+message BatteryStatus {
+  double capacity_kwh = 1;
+  double state_of_charge_kwh = 2;
+  double min_state_of_charge_kwh = 3;
+  double max_charge_rate_kw = 4;
+  double max_discharge_rate_kw = 5;
+  BatteryMode mode = 6;
+  double power_kw = 7;
+  google.protobuf.Timestamp last_updated = 8;
+}
+
+service BatteryAgent {
+  rpc Health(google.protobuf.Empty) returns (HealthResponse);
+  rpc GetStatus(google.protobuf.Empty) returns (BatteryStatus);
+  rpc UpdateMeasurement(BatteryMeasurement) returns (BatteryStatus);
+  rpc ApplyControl(BatteryControl) returns (BatteryStatus);
+}
+
+enum VehicleMode {
+  VEHICLE_MODE_UNSPECIFIED = 0;
+  VEHICLE_MODE_CHARGE = 1;
+  VEHICLE_MODE_DISCHARGE = 2;
+  VEHICLE_MODE_IDLE = 3;
+}
+
+message VehicleMeasurement {
+  google.protobuf.BoolValue connected = 1;
+  double state_of_charge_kwh = 2;
+  google.protobuf.DoubleValue capacity_kwh = 3;
+}
+
+message VehicleControl {
+  VehicleMode mode = 1;
+  double power_kw = 2;
+}
+
+message VehicleStatus {
+  bool connected = 1;
+  double capacity_kwh = 2;
+  double state_of_charge_kwh = 3;
+  double max_charge_rate_kw = 4;
+  double max_discharge_rate_kw = 5;
+  VehicleMode mode = 6;
+  double power_kw = 7;
+  google.protobuf.Timestamp last_updated = 8;
+}
+
+service VehicleAgent {
+  rpc Health(google.protobuf.Empty) returns (HealthResponse);
+  rpc GetStatus(google.protobuf.Empty) returns (VehicleStatus);
+  rpc UpdateMeasurement(VehicleMeasurement) returns (VehicleStatus);
+  rpc ApplyControl(VehicleControl) returns (VehicleStatus);
+}
+
+message LoadMeasurement {
+  double critical_load_kw = 1;
+  double flexible_load_kw = 2;
+}
+
+message LoadSheddingRequest {
+  double shed_kw = 1;
+}
+
+message LoadStatus {
+  double critical_load_kw = 1;
+  double flexible_load_kw = 2;
+  double shed_kw = 3;
+  double total_nominal_load_kw = 4;
+  double total_consumption_kw = 5;
+  google.protobuf.Timestamp last_updated = 6;
+}
+
+service LoadAgent {
+  rpc Health(google.protobuf.Empty) returns (HealthResponse);
+  rpc GetStatus(google.protobuf.Empty) returns (LoadStatus);
+  rpc UpdateLoad(LoadMeasurement) returns (LoadStatus);
+  rpc ApplyShedding(LoadSheddingRequest) returns (LoadStatus);
+}
+
+message SystemStatus {
+  SolarStatus solar = 1;
+  BatteryStatus battery = 2;
+  VehicleStatus vehicle = 3;
+  LoadStatus load = 4;
+}
+
+message BatteryAction {
+  BatteryMode mode = 1;
+  double requested_power_kw = 2;
+  double applied_power_kw = 3;
+}
+
+message VehicleAction {
+  VehicleMode mode = 1;
+  double requested_power_kw = 2;
+  double applied_power_kw = 3;
+}
+
+message LoadAction {
+  double shed_target_kw = 1;
+}
+
+message CoordinationActions {
+  BatteryAction battery = 1;
+  VehicleAction vehicle = 2;
+  LoadAction load = 3;
+}
+
+message CoordinationPayload {
+  ProductionUpdate solar = 1;
+  LoadMeasurement load = 2;
+  BatteryMeasurement battery = 3;
+  VehicleMeasurement vehicle = 4;
+}
+
+message CoordinateRequest {
+  CoordinationPayload updates = 1;
+}
+
+message CoordinateResponse {
+  CoordinationActions actions = 1;
+  SystemStatus status = 2;
+}
+
+service CentralCoordinator {
+  rpc Health(google.protobuf.Empty) returns (HealthResponse);
+  rpc GetStatus(google.protobuf.Empty) returns (SystemStatus);
+  rpc Coordinate(CoordinateRequest) returns (CoordinateResponse);
+}

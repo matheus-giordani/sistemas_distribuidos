@@ -13,4 +13,4 @@ COPY services /code/services
 
 EXPOSE 8002
 
-CMD ["uvicorn", "services.battery_agent.app.main:app", "--host", "0.0.0.0", "--port", "8002"]
+CMD ["python3", "-m", "services.battery_agent.app.main"]

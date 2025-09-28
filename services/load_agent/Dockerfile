@@ -13,4 +13,4 @@ COPY services /code/services
 
 EXPOSE 8004
 
-CMD ["uvicorn", "services.load_agent.app.main:app", "--host", "0.0.0.0", "--port", "8004"]
+CMD ["python3", "-m", "services.load_agent.app.main"]
