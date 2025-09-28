@@ -68,7 +68,3 @@ python -m services.vehicle_agent.app.main
 python -m services.load_agent.app.main
 python -m services.central.app.main
 ```
-
-## Notas adicionais
-- Dependências principais: `grpcio`, `protobuf`, `pydantic-settings`.
-- Todos os serviços executam gRPC assíncrono (`grpc.aio`), permitindo concorrência sem bloquear o loop de eventos.
